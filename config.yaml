@@ -1,0 +1,217 @@
+# ==============================================================================
+# CatEacc 生产级 Mihomo (Clash Meta v1.19.34+) 配置模板
+# 仓库: https://github.com/CatEacc/vps-clash-runbook
+# 配套服务端: https://github.com/CatEacc/vps-xray-runbook
+# 特性: 零泄露 Fake-IP DNS / dialer-proxy 链式中转家宽 / 全量官方 mrs 二进制规则集
+# ==============================================================================
+
+mixed-port: 7890
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: warning
+ipv6: false
+unified-delay: true
+tcp-concurrent: true
+find-process-mode: strict
+
+profile:
+  store-selected: true
+  store-fake-ip: true
+
+sniffer:
+  enable: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  override-destination: false
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+      override-destination: true
+    TLS:
+      ports: [443, 8443]
+    QUIC:
+      ports: [443, 8443]
+
+tun:
+  enable: true
+  stack: mixed
+  dns-hijack:
+    - any:53
+    - tcp://any:53
+  auto-route: true
+  auto-redirect: true
+  auto-detect-interface: true
+  strict-route: true
+
+dns:
+  enable: true
+  # 仅监听本机回环，防止公网/局域网暴露开放 DNS 端口（软路由需局域网直连时再配合防火墙按需开放）
+  listen: 127.0.0.1:1053
+  ipv6: false
+  respect-rules: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - "*.lan"
+    - "*.local"
+    - "+.msftconnecttest.com"
+    - "+.msftncsi.com"
+    - "localhost.ptlogin2.qq.com"
+    - "time.*.com"
+    - "ntp.*.com"
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+  proxy-server-nameserver:
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
+  nameserver:
+    - https://1.1.1.1/dns-query
+    - https://dns.google/dns-query
+  nameserver-policy:
+    "rule-set:cn_domain,private_domain":
+      - https://doh.pub/dns-query
+      - https://dns.alidns.com/dns-query
+
+# ------------------------------------------------------------------------------
+# 节点定义（请将下方示例 IP / 端口 / UUID / 密钥替换为你的实际节点参数）
+# ------------------------------------------------------------------------------
+proxies:
+  # [示例 1] 前置机房优化机：VLESS + REALITY + Vision（vps-xray-runbook 方案 1-2）
+  - name: "Relay-CN2-Vision"
+    type: vless
+    server: 198.51.100.10
+    port: 443
+    uuid: 00000000-0000-0000-0000-000000000001
+    network: tcp
+    tls: true
+    udp: true
+    flow: xtls-rprx-vision
+    servername: addons.mozilla.org
+    reality-opts:
+      # 请替换为你的真实 REALITY 公钥与 ShortID（下方为合法格式占位符）
+      public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+      short-id: 01234567
+    client-fingerprint: chrome
+
+  # [示例 2] 前置机房备用机：Hysteria 2 + 端口跳跃（vps-xray-runbook 方案 3）
+  - name: "Relay-Hy2-Hopping"
+    type: hysteria2
+    server: 203.0.113.20
+    port: 8443
+    ports: 20000-50000
+    password: REPLACE_WITH_YOUR_HY2_PASSWORD
+    sni: www.bing.com
+    skip-cert-verify: true
+    # 请替换为你的真实自签证书 SHA256 指纹（下方为合法格式占位符）
+    fingerprint: 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF
+    # 精品线路不填 up/down（使用标准 QUIC BBR）；廉价高丢包线可按需取消注释开启 Brutal
+    # up: "50 Mbps"
+    # down: "300 Mbps"
+
+  # [示例 3] 后端海外住宅家宽落地：Shadowsocks-2022（vps-xray-runbook 方案 1-3）
+  # 通过 dialer-proxy 经由“🚀 前置优化机”中转连入，实现 0 IP 漂移 + 精品回国线路！
+  - name: "Residential-ISP-Landing"
+    type: ss
+    server: 12.34.56.78
+    port: 30001
+    cipher: 2022-blake3-aes-256-gcm
+    # 请替换为家宽机生成的 32 字节 Base64 密钥（下方为合法格式占位符）
+    password: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    udp: true
+    dialer-proxy: "🚀 前置优化机"
+
+# ------------------------------------------------------------------------------
+# 策略组（按业务场景精细隔离：AI/流媒体走纯净家宽，常规代理走高速前置）
+# ------------------------------------------------------------------------------
+proxy-groups:
+  - name: "🚀 前置优化机"
+    type: fallback
+    interval: 120
+    url: https://www.gstatic.com/generate_204
+    proxies:
+      - Relay-CN2-Vision
+      - Relay-Hy2-Hopping
+
+  - name: "🏠 纯净家宽出口"
+    type: select
+    proxies:
+      - Residential-ISP-Landing
+      - 🚀 前置优化机
+
+  - name: "🤖 AI 平台"
+    type: select
+    proxies:
+      - 🏠 纯净家宽出口
+      - 🚀 前置优化机
+
+  - name: "🎬 海外流媒体"
+    type: select
+    proxies:
+      - 🏠 纯净家宽出口
+      - 🚀 前置优化机
+
+  - name: "🌐 默认代理"
+    type: select
+    proxies:
+      - 🚀 前置优化机
+      - 🏠 纯净家宽出口
+      - DIRECT
+
+  - name: "🐟 漏网之鱼"
+    type: select
+    proxies:
+      - 🌐 默认代理
+      - DIRECT
+
+# ------------------------------------------------------------------------------
+# MetaCubeX 官方 mrs 二进制规则集（低内存、高速匹配）
+# ------------------------------------------------------------------------------
+rule-anchor:
+  domain: &domain { type: http, interval: 86400, behavior: domain, format: mrs }
+  ip: &ip { type: http, interval: 86400, behavior: ipcidr, format: mrs }
+
+rule-providers:
+  private_domain: { <<: *domain, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/private.mrs" }
+  private_ip:     { <<: *ip,     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/private.mrs" }
+  cn_domain:      { <<: *domain, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs" }
+  cn_ip:          { <<: *ip,     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/cn.mrs" }
+  openai:         { <<: *domain, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/openai.mrs" }
+  anthropic:      { <<: *domain, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/anthropic.mrs" }
+  gemini:         { <<: *domain, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google-gemini.mrs" }
+  netflix:        { <<: *domain, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/netflix.mrs" }
+  tiktok:         { <<: *domain, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/tiktok.mrs" }
+  youtube:        { <<: *domain, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/youtube.mrs" }
+  telegram_ip:    { <<: *ip,     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/telegram.mrs" }
+
+# ------------------------------------------------------------------------------
+# 路由分流规则（自上而下首条命中）
+# ------------------------------------------------------------------------------
+rules:
+  # [可选] 驻地光猫家宽防状态表打满：取消下行注释可拦截 QUIC (UDP 443) 逼浏览器无感回退 TCP 443
+  # - AND,((NETWORK,UDP),(DST-PORT,443)),REJECT
+
+  # 1. 局域网与私网直连
+  - RULE-SET,private_domain,DIRECT
+  - RULE-SET,private_ip,DIRECT,no-resolve
+
+  # 2. AI 平台精准走纯净住宅家宽出口
+  - RULE-SET,openai,🤖 AI 平台
+  - RULE-SET,anthropic,🤖 AI 平台
+  - RULE-SET,gemini,🤖 AI 平台
+
+  # 3. 流媒体分流
+  - RULE-SET,netflix,🎬 海外流媒体
+  - RULE-SET,tiktok,🎬 海外流媒体
+  - RULE-SET,youtube,🌐 默认代理
+
+  # 4. Telegram
+  - RULE-SET,telegram_ip,🌐 默认代理,no-resolve
+
+  # 5. 国内域名与 IP 直连
+  - RULE-SET,cn_domain,DIRECT
+  - RULE-SET,cn_ip,DIRECT
+
+  # 6. 兜底匹配
+  - MATCH,🐟 漏网之鱼
