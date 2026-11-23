@@ -326,6 +326,7 @@ ${QUIC_RULE}
   - RULE-SET,cn_ip,DIRECT
   - MATCH,🐟 漏网之鱼
 EOF
+    chmod 600 "$OUT_PATH"
 }
 
 case "$MODE" in
@@ -363,6 +364,7 @@ case "$MODE" in
                 curl -fsSL -o /etc/mihomo/config.yaml "https://raw.githubusercontent.com/CatEacc/vps-clash-runbook/main/config.yaml"
             fi
         fi
+        chmod 700 /etc/mihomo && chmod 600 /etc/mihomo/config.yaml
 
         echo "[3/3] 校验配置并注册 systemd 开机自启..."
         /usr/local/bin/mihomo -d /etc/mihomo -t -f /etc/mihomo/config.yaml
