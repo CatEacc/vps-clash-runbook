@@ -1,0 +1,89 @@
+name: Script, Override & Mihomo v1.19.34 Check
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Bash syntax & ShellCheck audit
+        run: |
+          bash -n clash.sh
+          shellcheck -S error clash.sh
+          echo "clash.sh syntax and ShellCheck OK"
+
+      - name: Node.js edge-case tests for override.js
+        run: |
+          node - << 'JS'
+          const assert = require("assert");
+          const fs = require("fs");
+          const vm = require("vm");
+          const code = fs.readFileSync("override.js", "utf8");
+          function runMain(cfg) {
+            const ctx = {};
+            vm.createContext(ctx);
+            vm.runInContext(code, ctx);
+            return ctx.main(JSON.parse(JSON.stringify(cfg)));
+          }
+
+          // 1. Empty config does not inject orphan rule-providers
+          const rEmpty = runMain({});
+          assert.strictEqual(rEmpty.ipv6, false);
+          assert.strictEqual(rEmpty["rule-providers"], undefined);
+
+          // 2. Pure chain proxy without direct nodes never creates dialer-proxy cycle
+          const rPureChain = runMain({
+            proxies: [{ name: "Home", type: "ss", "dialer-proxy": "🚀 前置优化机" }]
+          });
+          const frontGrp = rPureChain["proxy-groups"].find((g) => g.name === "🚀 前置优化机");
+          const autoGrp = rPureChain["proxy-groups"].find((g) => g.name === "⚡ 自动优选");
+          assert(!frontGrp.proxies.includes("Home"), "chain node must not enter front group");
+          assert(!autoGrp.proxies.includes("Home"), "chain node must not enter url-test group");
+          assert(autoGrp.proxies.includes("DIRECT"), "fallback DIRECT present");
+
+          // 3. proxy-providers + upstream bootstrap group retention via BFS
+          const rProv = runMain({
+            "proxy-providers": { AirportA: { type: "http", proxy: "🔰 引导组" } },
+            "proxy-groups": [
+              { name: "🔰 引导组", type: "select", proxies: ["🔰 子组"] },
+              { name: "🔰 子组", type: "select", proxies: ["DIRECT"] }
+            ],
+            proxies: [{ name: "ATT-Home", type: "ss", "dialer-proxy": "🚀 前置优化机" }]
+          });
+          const grpNames = rProv["proxy-groups"].map((g) => g.name);
+          assert(grpNames.includes("🔰 引导组") && grpNames.includes("🔰 子组"), "BFS kept provider bootstrap groups");
+
+          // 4. Node name collision with generated group name is disambiguated
+          const rCollide = runMain({
+            proxies: [{ name: "🌐 默认代理", type: "vless" }]
+          });
+          assert.strictEqual(rCollide.proxies[0].name, "🌐 默认代理-节点");
+          console.log("All override.js edge-case assertions passed!");
+          JS
+
+      - name: Validate config.yaml & clash.sh outputs with official Mihomo v1.19.34
+        run: |
+          M_VER="v1.19.34"
+          curl -fsSL -o /tmp/mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${M_VER}/mihomo-linux-amd64-compatible-${M_VER}.gz"
+          gzip -dc /tmp/mihomo.gz > /tmp/mihomo
+          chmod +x /tmp/mihomo
+          mkdir -p /tmp/mihomo-dir
+          /tmp/mihomo -d /tmp/mihomo-dir -t -f config.yaml
+
+          # Test clash.sh Mode 1 (VLESS + SS-2022)
+          printf '1\n198.51.100.10\n443\n00000000-0000-0000-0000-000000000001\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n01234567\n1\ny\n192.0.2.30\n30001\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nn\ny\n' | bash clash.sh 1
+          /tmp/mihomo -d /tmp/mihomo-dir -t -f ./mihomo-config.yaml
+
+          # Test clash.sh Mode 1 (Hy2 with backslash & quote in password + colon port range)
+          printf '2\n203.0.113.20\n8443\n20000:50000\npa"ss\\word\\\nwww.bing.com\n\nn\nn\nn\n' | bash clash.sh 1
+          /tmp/mihomo -d /tmp/mihomo-dir -t -f ./mihomo-config.yaml
+          rm -f ./mihomo-config.yaml
+          echo "All Mihomo v1.19.34 configuration checks passed!"
