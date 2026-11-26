@@ -55,11 +55,22 @@ dns:
   fake-ip-filter:
     - "*.lan"
     - "*.local"
+    - "*.arpa"
     - "+.msftconnecttest.com"
     - "+.msftncsi.com"
+    - "connectivitycheck.gstatic.com"
+    - "captive.apple.com"
+    - "detectportal.firefox.com"
     - "localhost.ptlogin2.qq.com"
+    - "localhost.sec.qq.com"
     - "time.*.com"
+    - "time.*.gov"
+    - "time.*.apple.com"
     - "ntp.*.com"
+    - "+.pool.ntp.org"
+    - "+.stun.*.*"
+    - "+.stun.*.*.*"
+    - "+.stun.*.*.*.*"
   default-nameserver:
     - 223.5.5.5
     - 119.29.29.29
@@ -169,8 +180,8 @@ proxy-groups:
 # MetaCubeX 官方 mrs 二进制规则集（低内存、高速匹配）
 # ------------------------------------------------------------------------------
 rule-anchor:
-  domain: &domain { type: http, interval: 86400, behavior: domain, format: mrs }
-  ip: &ip { type: http, interval: 86400, behavior: ipcidr, format: mrs }
+  domain: &domain { type: http, interval: 86400, behavior: domain, format: mrs, proxy: "🚀 前置优化机" }
+  ip: &ip { type: http, interval: 86400, behavior: ipcidr, format: mrs, proxy: "🚀 前置优化机" }
 
 rule-providers:
   private_domain: { <<: *domain, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/private.mrs" }

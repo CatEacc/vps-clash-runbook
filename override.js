@@ -8,13 +8,20 @@
 const BLOCK_QUIC = false;
 
 function main(config) {
-  // 1. 底层并发与嗅探优化（Mihomo v1.19+ 逐节点补全 client-fingerprint）
+  // 1. 底层并发、禁 IPv6 防泄漏与嗅探优化（Mihomo v1.19+ 逐节点补全 client-fingerprint）
+  config.ipv6 = false;
   config["unified-delay"] = true;
   config["tcp-concurrent"] = true;
   config["find-process-mode"] = "strict";
+  config.profile = {
+    ...(config.profile || {}),
+    "store-selected": true,
+    "store-fake-ip": true,
+  };
+
   if (Array.isArray(config.proxies)) {
     config.proxies.forEach((p) => {
-      if (["vless", "vmess", "trojan"].includes(p.type) && !p["client-fingerprint"]) {
+      if (p && typeof p === "object" && ["vless", "vmess", "trojan"].includes(p.type) && !p["client-fingerprint"]) {
         p["client-fingerprint"] = "chrome";
       }
     });
@@ -32,7 +39,7 @@ function main(config) {
     },
   };
 
-  // 2. 零泄露 Fake-IP DNS 注入（全部采用纯 IP DoH 避免域名自举死锁，仅监听 127.0.0.1）
+  // 2. 零泄露 Fake-IP DNS 注入（default-nameserver 纯 IP 自举 DoH，仅监听 127.0.0.1）
   config.dns = {
     enable: true,
     listen: "127.0.0.1:1053",
@@ -43,11 +50,22 @@ function main(config) {
     "fake-ip-filter": [
       "*.lan",
       "*.local",
+      "*.arpa",
       "+.msftconnecttest.com",
       "+.msftncsi.com",
+      "connectivitycheck.gstatic.com",
+      "captive.apple.com",
+      "detectportal.firefox.com",
       "localhost.ptlogin2.qq.com",
+      "localhost.sec.qq.com",
       "time.*.com",
+      "time.*.gov",
+      "time.*.apple.com",
       "ntp.*.com",
+      "+.pool.ntp.org",
+      "+.stun.*.*",
+      "+.stun.*.*.*",
+      "+.stun.*.*.*.*",
     ],
     "default-nameserver": ["223.5.5.5", "119.29.29.29"],
     "proxy-server-nameserver": [
@@ -66,45 +84,72 @@ function main(config) {
     },
   };
 
-  // 3. 挂载官方 mrs 二进制规则集
-  const domainCommon = { type: "http", interval: 86400, behavior: "domain", format: "mrs" };
-  const ipCommon = { type: "http", interval: 86400, behavior: ipCommonBehavior(), format: "mrs" };
-  function ipCommonBehavior() { return "ipcidr"; }
-
-  config["rule-providers"] = {
-    ...(config["rule-providers"] || {}),
-    private_domain: { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/private.mrs" },
-    private_ip:     { ...ipCommon,     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/private.mrs" },
-    cn_domain:      { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs" },
-    cn_ip:          { ...ipCommon,     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/cn.mrs" },
-    openai:         { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/openai.mrs" },
-    anthropic:      { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/anthropic.mrs" },
-    gemini:         { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google-gemini.mrs" },
-    netflix:        { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/netflix.mrs" },
-    tiktok:         { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/tiktok.mrs" },
-    youtube:        { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/youtube.mrs" },
-    telegram_ip:    { ...ipCommon,     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/telegram.mrs" },
-  };
-
-  // 4. 提取节点（兼容内联 proxies 与外部 proxy-providers）并严格隔离【直连/前置机】与【dialer-proxy 链式落地机】
-  const proxies = Array.isArray(config.proxies) ? config.proxies : [];
+  // 3. 提取节点（兼容内联 proxies 与外部 proxy-providers）并严格隔离【直连/前置机】与【dialer-proxy 链式落地机】
+  const proxies = Array.isArray(config.proxies)
+    ? config.proxies.filter((p) => p && typeof p === "object" && p.name)
+    : [];
   const providerNames = config["proxy-providers"] && typeof config["proxy-providers"] === "object"
     ? Object.keys(config["proxy-providers"])
     : [];
   const useAttr = providerNames.length > 0 ? { use: providerNames } : {};
 
   if (proxies.length > 0 || providerNames.length > 0) {
+    // 防止上游订阅节点名与本脚本生成的策略组重名触发 Mihomo duplicate group name 报错
+    const reservedGroups = new Set([
+      "🚀 前置优化机",
+      "🏠 纯净家宽出口",
+      "🤖 AI 平台",
+      "🎬 海外流媒体",
+      "🌐 默认代理",
+      "⚡ 自动优选",
+      "🐟 漏网之鱼",
+    ]);
+    const renamedMap = new Map();
+    proxies.forEach((p) => {
+      if (reservedGroups.has(p.name)) {
+        const newName = `${p.name}-节点`;
+        renamedMap.set(p.name, newName);
+        p.name = newName;
+      }
+    });
+    if (renamedMap.size > 0) {
+      proxies.forEach((p) => {
+        if (p["dialer-proxy"] && renamedMap.has(p["dialer-proxy"])) {
+          p["dialer-proxy"] = renamedMap.get(p["dialer-proxy"]);
+        }
+      });
+    }
+
+    const domainCommon = { type: "http", interval: 86400, behavior: "domain", format: "mrs", proxy: "🚀 前置优化机" };
+    const ipCommon = { type: "http", interval: 86400, behavior: "ipcidr", format: "mrs", proxy: "🚀 前置优化机" };
+    config["rule-providers"] = {
+      ...(config["rule-providers"] || {}),
+      private_domain: { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/private.mrs" },
+      private_ip:     { ...ipCommon,     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/private.mrs" },
+      cn_domain:      { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/cn.mrs" },
+      cn_ip:          { ...ipCommon,     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/cn.mrs" },
+      openai:         { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/openai.mrs" },
+      anthropic:      { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/anthropic.mrs" },
+      gemini:         { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/google-gemini.mrs" },
+      netflix:        { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/netflix.mrs" },
+      tiktok:         { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/tiktok.mrs" },
+      youtube:        { ...domainCommon, url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geosite/youtube.mrs" },
+      telegram_ip:    { ...ipCommon,     url: "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/meta/geo/geoip/telegram.mrs" },
+    };
+
     const proxyNameSet = new Set(proxies.map((p) => p.name));
     const oldGroups = Array.isArray(config["proxy-groups"]) ? config["proxy-groups"] : [];
     const directProxies = proxies.filter((p) => !p["dialer-proxy"]).map((p) => p.name);
     const chainProxies = proxies.filter((p) => Boolean(p["dialer-proxy"])).map((p) => p.name);
-    const frontList = directProxies.length > 0 ? directProxies : (providerNames.length > 0 ? [] : proxies.map((p) => p.name));
+    // 绝不将 chainProxies 混入前置组防 dialer-proxy 闭环死锁；极端纯链式且无 provider 时回退为 DIRECT
+    const frontList = directProxies;
+    const fallbackFront = frontList.length === 0 && providerNames.length === 0 ? ["DIRECT"] : [];
 
     const groups = [
       {
         name: "🚀 前置优化机",
         type: "select",
-        proxies: ["⚡ 自动优选", ...frontList],
+        proxies: ["⚡ 自动优选", ...frontList, ...fallbackFront],
         ...useAttr,
       },
       {
@@ -119,7 +164,7 @@ function main(config) {
         url: "https://www.gstatic.com/generate_204",
         interval: 300,
         tolerance: 50,
-        ...(frontList.length > 0 ? { proxies: frontList } : {}),
+        ...(frontList.length > 0 ? { proxies: frontList } : (fallbackFront.length > 0 ? { proxies: fallbackFront } : {})),
         ...useAttr,
       },
     ];
@@ -134,15 +179,18 @@ function main(config) {
       );
     } else {
       groups.push(
-        { name: "🤖 AI 平台", type: "select", proxies: ["🚀 前置优化机", "⚡ 自动优选", ...frontList], ...useAttr },
-        { name: "🎬 海外流媒体", type: "select", proxies: ["🚀 前置优化机", "⚡ 自动优选", ...frontList], ...useAttr }
+        { name: "🤖 AI 平台", type: "select", proxies: ["🚀 前置优化机", "⚡ 自动优选", ...frontList, ...fallbackFront], ...useAttr },
+        { name: "🎬 海外流媒体", type: "select", proxies: ["🚀 前置优化机", "⚡ 自动优选", ...frontList, ...fallbackFront], ...useAttr }
       );
     }
     groups.push({ name: "🐟 漏网之鱼", type: "select", proxies: ["🌐 默认代理", "DIRECT"] });
 
-    // 若订阅中链式节点的 dialer-proxy 引用了原订阅的自定义策略组，按 BFS 传递闭包保留全部依赖子组防报错
+    // 若订阅中链式节点或 proxy-providers 引用了原订阅的自定义策略组，按 BFS 传递闭包保留全部依赖子组防报错
     const builtGroupNames = new Set(groups.map((g) => g.name));
-    const queue = proxies.map((p) => p["dialer-proxy"]).filter(Boolean);
+    const providerProxyRefs = Object.values(config["proxy-providers"] || {}).flatMap((pv) =>
+      pv && typeof pv === "object" ? [pv.proxy, pv.override && pv.override["dialer-proxy"]] : []
+    );
+    const queue = [...proxies.map((p) => p["dialer-proxy"]), ...providerProxyRefs].filter(Boolean);
     while (queue.length > 0) {
       const name = queue.shift();
       if (!name || proxyNameSet.has(name) || builtGroupNames.has(name)) continue;
