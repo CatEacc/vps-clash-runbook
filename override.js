@@ -88,10 +88,10 @@ function main(config) {
   const proxies = Array.isArray(config.proxies)
     ? config.proxies.filter((p) => p && typeof p === "object" && p.name)
     : [];
-  const providerNames = config["proxy-providers"] && typeof config["proxy-providers"] === "object"
-    ? Object.keys(config["proxy-providers"])
-    : [];
-  const useAttr = providerNames.length > 0 ? { use: providerNames } : {};
+  const providersObj = config["proxy-providers"] && typeof config["proxy-providers"] === "object"
+    ? config["proxy-providers"]
+    : {};
+  const providerNames = Object.keys(providersObj);
 
   if (proxies.length > 0 || providerNames.length > 0) {
     // 防止上游订阅节点名与本脚本生成的策略组重名触发 Mihomo duplicate group name 报错
@@ -104,18 +104,32 @@ function main(config) {
       "⚡ 自动优选",
       "🐟 漏网之鱼",
     ]);
+    const usedNames = new Set(proxies.map((p) => p.name));
     const renamedMap = new Map();
     proxies.forEach((p) => {
       if (reservedGroups.has(p.name)) {
-        const newName = `${p.name}-节点`;
-        renamedMap.set(p.name, newName);
-        p.name = newName;
+        let cand = `${p.name}-节点`;
+        let seq = 2;
+        while (usedNames.has(cand) || reservedGroups.has(cand)) {
+          cand = `${p.name}-节点${seq++}`;
+        }
+        renamedMap.set(p.name, cand);
+        usedNames.add(cand);
+        p.name = cand;
       }
     });
     if (renamedMap.size > 0) {
       proxies.forEach((p) => {
         if (p["dialer-proxy"] && renamedMap.has(p["dialer-proxy"])) {
           p["dialer-proxy"] = renamedMap.get(p["dialer-proxy"]);
+        }
+      });
+      Object.values(providersObj).forEach((pv) => {
+        if (pv && typeof pv === "object") {
+          if (pv.proxy && renamedMap.has(pv.proxy)) pv.proxy = renamedMap.get(pv.proxy);
+          if (pv.override && pv.override["dialer-proxy"] && renamedMap.has(pv.override["dialer-proxy"])) {
+            pv.override["dialer-proxy"] = renamedMap.get(pv.override["dialer-proxy"]);
+          }
         }
       });
     }
@@ -139,24 +153,48 @@ function main(config) {
 
     const proxyNameSet = new Set(proxies.map((p) => p.name));
     const oldGroups = Array.isArray(config["proxy-groups"]) ? config["proxy-groups"] : [];
+    const oldGroupMap = new Map(oldGroups.filter((g) => g && g.name).map((g) => [g.name, g]));
+
+    // 区分直连前置 provider 与带 override.dialer-proxy 的链式落地 provider，防止前置组发生自环
+    const directProviderNames = providerNames.filter((k) => {
+      const pv = providersObj[k];
+      return !(pv && typeof pv === "object" && pv.override && pv.override["dialer-proxy"]);
+    });
+    const chainProviderNames = providerNames.filter((k) => {
+      const pv = providersObj[k];
+      return Boolean(pv && typeof pv === "object" && pv.override && pv.override["dialer-proxy"]);
+    });
+    const frontUseAttr = directProviderNames.length > 0 ? { use: directProviderNames } : {};
+    const chainUseAttr = chainProviderNames.length > 0 ? { use: chainProviderNames } : {};
+
+    // 若链式节点的 dialer-proxy 指向了不存在的组或节点，自动修正为前置优化机防 Mihomo 启动报错
+    proxies.forEach((p) => {
+      const dp = p["dialer-proxy"];
+      if (dp && !proxyNameSet.has(dp) && !reservedGroups.has(dp) && !oldGroupMap.has(dp) && dp !== "DIRECT") {
+        p["dialer-proxy"] = "🚀 前置优化机";
+      }
+    });
+
     const directProxies = proxies.filter((p) => !p["dialer-proxy"]).map((p) => p.name);
     const chainProxies = proxies.filter((p) => Boolean(p["dialer-proxy"])).map((p) => p.name);
-    // 绝不将 chainProxies 混入前置组防 dialer-proxy 闭环死锁；极端纯链式且无 provider 时回退为 DIRECT
+    const chainProxySet = new Set(chainProxies);
+    const chainProviderSet = new Set(chainProviderNames);
+    const hasChain = chainProxies.length > 0 || chainProviderNames.length > 0;
     const frontList = directProxies;
-    const fallbackFront = frontList.length === 0 && providerNames.length === 0 ? ["DIRECT"] : [];
+    const fallbackFront = frontList.length === 0 && directProviderNames.length === 0 ? ["DIRECT"] : [];
 
     const groups = [
       {
         name: "🚀 前置优化机",
         type: "select",
         proxies: ["⚡ 自动优选", ...frontList, ...fallbackFront],
-        ...useAttr,
+        ...frontUseAttr,
       },
       {
         name: "🌐 默认代理",
         type: "select",
-        proxies: ["🚀 前置优化机", "⚡ 自动优选", ...frontList, "DIRECT"],
-        ...useAttr,
+        proxies: ["🚀 前置优化机", ...(hasChain ? ["🏠 纯净家宽出口"] : []), "⚡ 自动优选", ...frontList, "DIRECT"],
+        ...frontUseAttr,
       },
       {
         name: "⚡ 自动优选",
@@ -165,48 +203,67 @@ function main(config) {
         interval: 300,
         tolerance: 50,
         ...(frontList.length > 0 ? { proxies: frontList } : (fallbackFront.length > 0 ? { proxies: fallbackFront } : {})),
-        ...useAttr,
+        ...frontUseAttr,
       },
     ];
 
-    if (chainProxies.length > 0) {
+    if (hasChain) {
       groups.splice(
         1,
         0,
-        { name: "🏠 纯净家宽出口", type: "select", proxies: [...chainProxies, "🚀 前置优化机"] },
-        { name: "🤖 AI 平台", type: "select", proxies: ["🏠 纯净家宽出口", ...chainProxies, "🚀 前置优化机"] },
-        { name: "🎬 海外流媒体", type: "select", proxies: ["🏠 纯净家宽出口", ...chainProxies, "🚀 前置优化机"] }
+        { name: "🏠 纯净家宽出口", type: "select", proxies: [...chainProxies, "🚀 前置优化机"], ...chainUseAttr },
+        { name: "🤖 AI 平台", type: "select", proxies: ["🏠 纯净家宽出口", ...chainProxies, "🚀 前置优化机"], ...chainUseAttr },
+        { name: "🎬 海外流媒体", type: "select", proxies: ["🏠 纯净家宽出口", ...chainProxies, "🚀 前置优化机"], ...chainUseAttr }
       );
     } else {
       groups.push(
-        { name: "🤖 AI 平台", type: "select", proxies: ["🚀 前置优化机", "⚡ 自动优选", ...frontList, ...fallbackFront], ...useAttr },
-        { name: "🎬 海外流媒体", type: "select", proxies: ["🚀 前置优化机", "⚡ 自动优选", ...frontList, ...fallbackFront], ...useAttr }
+        { name: "🤖 AI 平台", type: "select", proxies: ["🚀 前置优化机", "⚡ 自动优选", ...frontList, ...fallbackFront], ...frontUseAttr },
+        { name: "🎬 海外流媒体", type: "select", proxies: ["🚀 前置优化机", "⚡ 自动优选", ...frontList, ...fallbackFront], ...frontUseAttr }
       );
     }
     groups.push({ name: "🐟 漏网之鱼", type: "select", proxies: ["🌐 默认代理", "DIRECT"] });
 
-    // 若订阅中链式节点或 proxy-providers 引用了原订阅的自定义策略组，按 BFS 传递闭包保留全部依赖子组防报错
+    // 若订阅中链式节点或 proxy-providers 引用了原订阅的自定义策略组，按 BFS 传递闭包保留并净化子组防循环
     const builtGroupNames = new Set(groups.map((g) => g.name));
-    const providerProxyRefs = Object.values(config["proxy-providers"] || {}).flatMap((pv) =>
+    const providerProxyRefs = Object.values(providersObj).flatMap((pv) =>
       pv && typeof pv === "object" ? [pv.proxy, pv.override && pv.override["dialer-proxy"]] : []
     );
     const queue = [...proxies.map((p) => p["dialer-proxy"]), ...providerProxyRefs].filter(Boolean);
+    const keptCustomGroups = [];
     while (queue.length > 0) {
       const name = queue.shift();
       if (!name || proxyNameSet.has(name) || builtGroupNames.has(name)) continue;
-      const orig = oldGroups.find((g) => g && g.name === name);
+      const orig = oldGroupMap.get(name);
       if (orig) {
-        groups.push(orig);
+        const cloned = { ...orig };
         builtGroupNames.add(name);
+        if (Array.isArray(orig.use)) {
+          cloned.use = orig.use.filter((u) => providerNames.includes(u) && !chainProviderSet.has(u));
+          if (cloned.use.length === 0) delete cloned.use;
+        }
         if (Array.isArray(orig.proxies)) {
-          orig.proxies.forEach((ref) => {
-            if (ref && !proxyNameSet.has(ref) && !builtGroupNames.has(ref)) {
+          cloned.proxies = orig.proxies
+            .map((ref) => (renamedMap.has(ref) ? renamedMap.get(ref) : ref))
+            .filter((ref) => ref && !chainProxySet.has(ref) && ref !== name);
+          cloned.proxies.forEach((ref) => {
+            if (!proxyNameSet.has(ref) && !builtGroupNames.has(ref) && oldGroupMap.has(ref)) {
               queue.push(ref);
             }
           });
         }
+        keptCustomGroups.push(cloned);
       }
     }
+    const validTargets = new Set([...proxyNameSet, ...builtGroupNames, "DIRECT", "REJECT"]);
+    keptCustomGroups.forEach((g) => {
+      if (Array.isArray(g.proxies)) {
+        g.proxies = g.proxies.filter((ref) => validTargets.has(ref));
+      }
+      if ((!g.proxies || g.proxies.length === 0) && (!g.use || g.use.length === 0)) {
+        g.proxies = ["DIRECT"];
+      }
+      groups.push(g);
+    });
 
     config["proxy-groups"] = groups;
 

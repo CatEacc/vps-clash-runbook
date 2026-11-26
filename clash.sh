@@ -62,21 +62,41 @@ yaml_quote() {
 }
 
 clean_host() {
-    local h="$1"
-    h=$(printf "%s" "$h" | tr -d '[:space:]')
-    h="${h#[}"
-    h="${h%]}"
+    local h
+    h=$(printf "%s" "$1" | tr -d '[:space:]')
+    [[ "$h" == *"://"* ]] && h="${h#*://}"
+    h="${h%%[/?#]*}"
+    [[ "$h" == *"@"* ]] && h="${h##*@}"
+    if [[ "$h" =~ ^\[.*\](\:[0-9]+)?$ ]]; then
+        h="${h#\[}"
+        h="${h%%\]*}"
+    elif [[ "$h" =~ ^[^:]+:[0-9]+$ ]]; then
+        h="${h%:*}"
+    fi
     printf "%s" "$h"
 }
 
 prompt_required() {
     local prompt_text="$1" val=""
     while [ -z "$val" ]; do
-        read -rp "$prompt_text" val
+        if ! read -rp "$prompt_text" val; then
+            echo "  [错误] 输入流已结束 (EOF)，脚本退出。" >&2
+            return 1
+        fi
         val=$(printf '%s' "$val" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
         [ -z "$val" ] && echo "  [提示] 此项不能为空，请重新输入。" >&2
     done
     printf '%s' "$val"
+}
+
+prompt_host() {
+    local prompt_text="$1" raw="" h=""
+    while [ -z "$h" ]; do
+        raw=$(prompt_required "$prompt_text")
+        h=$(clean_host "$raw")
+        [ -z "$h" ] && echo "  [提示] 主机地址格式无效，请重新输入 IP 或域名。" >&2
+    done
+    printf '%s' "$h"
 }
 
 validate_port() {
@@ -125,19 +145,24 @@ generate_config() {
 
     if [ "$P_TYPE" = "1" ]; then
         RELAY_NAME="Relay-REALITY-Vision"
-        R_HOST=$(clean_host "$(prompt_required "  前置机 IP 或域名: ")")
-        read -rp "  前置机端口 (回车默认 443): " R_PORT
+        R_HOST=$(prompt_host "  前置机 IP 或域名: ")
+        read -rp "  前置机端口 (回车默认 443): " R_PORT || R_PORT=""
         R_PORT=$(validate_port "${R_PORT:-443}" 443)
         while true; do
-            R_UUID=$(printf "%s" "$(prompt_required "  VLESS UUID: ")" | tr -d '[:space:]')
+            raw_uuid=$(prompt_required "  VLESS UUID: ")
+            R_UUID=$(printf "%s" "$raw_uuid" | tr -d '[:space:]')
             if [[ "$R_UUID" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
                 break
             fi
             echo "  [提示] UUID 格式不合法（需标准 36 位 UUID），请重新输入。" >&2
         done
-        R_PBK=$(printf "%s" "$(prompt_required "  REALITY Public Key (pbk): ")" | tr -d '[:space:]')
+        raw_pbk=$(prompt_required "  REALITY Public Key (pbk): ")
+        R_PBK=$(printf "%s" "$raw_pbk" | tr -d '[:space:]')
         while true; do
-            read -rp "  REALITY Short ID (sid，可留空): " R_SID
+            if ! read -rp "  REALITY Short ID (sid，可留空): " R_SID; then
+                echo "  [错误] 输入流已结束 (EOF)，脚本退出。" >&2
+                exit 1
+            fi
             R_SID=$(printf "%s" "$R_SID" | tr -d '[:space:]')
             if [[ "$R_SID" =~ ^[0-9a-fA-F]{0,16}$ ]]; then
                 break
@@ -148,13 +173,14 @@ generate_config() {
         echo "    1) addons.mozilla.org （推荐：纯海外无国内 CDN）"
         echo "    2) www.gentoo.org     （纯海外无国内 CDN）"
         echo "    3) 手动输入自定义域名"
-        read -rp "  请输入选项 [1-3] (回车默认 1): " SNI_OPT
+        read -rp "  请输入选项 [1-3] (回车默认 1): " SNI_OPT || SNI_OPT=""
         case "${SNI_OPT:-1}" in
             1) R_SNI="addons.mozilla.org" ;;
             2) R_SNI="www.gentoo.org" ;;
             3)
-                read -rp "  -> 请输入自定义 SNI: " SNI_CUSTOM
-                R_SNI=$(printf "%s" "${SNI_CUSTOM:-addons.mozilla.org}" | tr -d '[:space:]')
+                read -rp "  -> 请输入自定义 SNI: " SNI_CUSTOM || SNI_CUSTOM=""
+                R_SNI=$(clean_host "${SNI_CUSTOM:-addons.mozilla.org}")
+                R_SNI="${R_SNI:-addons.mozilla.org}"
                 ;;
             *) R_SNI="addons.mozilla.org" ;;
         esac
@@ -175,24 +201,33 @@ generate_config() {
     client-fingerprint: chrome"
     else
         RELAY_NAME="Relay-Hy2-Hopping"
-        R_HOST=$(clean_host "$(prompt_required "  前置机 IP 或域名: ")")
-        read -rp "  Hysteria 2 端口 (回车默认 8443): " R_PORT
+        R_HOST=$(prompt_host "  前置机 IP 或域名: ")
+        read -rp "  Hysteria 2 端口 (回车默认 8443): " R_PORT || R_PORT=""
         R_PORT=$(validate_port "${R_PORT:-8443}" 8443)
-        read -rp "  端口跳跃范围 (回车默认 20000-50000，填 none 关闭): " R_MPORT
+        read -rp "  端口跳跃范围 (回车默认 20000-50000，填 none 关闭): " R_MPORT || R_MPORT=""
         R_MPORT=$(printf "%s" "${R_MPORT:-20000-50000}" | tr -d '[:space:]' | tr ':' '-')
+        R_MPORT_LOW=$(printf "%s" "$R_MPORT" | tr '[:upper:]' '[:lower:]')
         R_PASS=$(prompt_required "  Hysteria 2 密码: ")
-        read -rp "  SNI (回车默认 www.bing.com): " R_SNI
-        R_SNI=$(printf "%s" "${R_SNI:-www.bing.com}" | tr -d '[:space:]')
-        read -rp "  证书 SHA256 指纹 (正规证书留空): " R_FP
+        read -rp "  SNI (回车默认 www.bing.com): " R_SNI || R_SNI=""
+        R_SNI=$(clean_host "${R_SNI:-www.bing.com}")
+        R_SNI="${R_SNI:-www.bing.com}"
+        read -rp "  证书 SHA256 指纹 (正规证书留空): " R_FP || R_FP=""
         R_FP=$(printf "%s" "$R_FP" | tr -d '[:space:]')
+        R_FP="${R_FP#*=}"
 
         PROXY_BLOCK="  - name: \"${RELAY_NAME}\"
     type: hysteria2
     server: $(yaml_quote "$R_HOST")
     port: ${R_PORT}"
-        if [ "$R_MPORT" != "none" ] && [[ "$R_MPORT" =~ ^[0-9]+-[0-9]+$ ]]; then
-            PROXY_BLOCK="${PROXY_BLOCK}
+        if [ "$R_MPORT_LOW" != "none" ]; then
+            if [[ "$R_MPORT" =~ ^([0-9]+)-([0-9]+)$ ]] && [ "${BASH_REMATCH[1]}" -ge 1 ] && [ "${BASH_REMATCH[2]}" -le 65535 ] && [ "${BASH_REMATCH[1]}" -le "${BASH_REMATCH[2]}" ]; then
+                PROXY_BLOCK="${PROXY_BLOCK}
     ports: $(yaml_quote "$R_MPORT")"
+            else
+                echo "  [提示] 端口跳跃范围 '${R_MPORT}' 非法，已使用默认范围 20000-50000" >&2
+                PROXY_BLOCK="${PROXY_BLOCK}
+    ports: \"20000-50000\""
+            fi
         fi
         PROXY_BLOCK="${PROXY_BLOCK}
     password: $(yaml_quote "$R_PASS")
@@ -205,15 +240,16 @@ generate_config() {
     fi
 
     echo ""
-    read -rp "  是否通过 dialer-proxy 链式中转后端海外家宽 (SS-2022)？[y/N]: " USE_RES
+    read -rp "  是否通过 dialer-proxy 链式中转后端海外家宽 (SS-2022)？[y/N]: " USE_RES || USE_RES="n"
     USE_RES="${USE_RES:-n}"
     local RES_NAME=""
     if [[ "$USE_RES" =~ ^[Yy]$ ]]; then
         RES_NAME="Residential-ISP-Landing"
-        RES_HOST=$(clean_host "$(prompt_required "  -> 家宽机 IP: ")")
-        read -rp "  -> 家宽机 SS-2022 端口 (回车默认 30001): " RES_PORT
+        RES_HOST=$(prompt_host "  -> 家宽机 IP: ")
+        read -rp "  -> 家宽机 SS-2022 端口 (回车默认 30001): " RES_PORT || RES_PORT=""
         RES_PORT=$(validate_port "${RES_PORT:-30001}" 30001)
-        RES_PASS=$(printf "%s" "$(prompt_required "  -> 家宽机 SS-2022 密钥 (32字节 Base64): ")" | tr -d '[:space:]')
+        raw_rpass=$(prompt_required "  -> 家宽机 SS-2022 密钥 (32字节 Base64): ")
+        RES_PASS=$(printf "%s" "$raw_rpass" | tr -d '[:space:]')
         PROXY_BLOCK="${PROXY_BLOCK}
 
   - name: \"${RES_NAME}\"
@@ -459,7 +495,7 @@ case "$MODE" in
         echo "[2/3] 配置 /etc/mihomo/config.yaml..."
         IS_PLACEHOLDER="0"
         if [ ! -f /etc/mihomo/config.yaml ] || grep -q "REPLACE_WITH_YOUR_HY2_PASSWORD" /etc/mihomo/config.yaml 2>/dev/null; then
-            read -rp "  是否立即交互生成 /etc/mihomo/config.yaml？[Y/n]: " GEN_NOW
+            read -rp "  是否立即交互生成 /etc/mihomo/config.yaml？[Y/n]: " GEN_NOW || GEN_NOW="n"
             GEN_NOW="${GEN_NOW:-y}"
             if [[ "$GEN_NOW" =~ ^[Yy]$ ]]; then
                 generate_config /etc/mihomo/config.yaml.new "false"
@@ -468,12 +504,12 @@ case "$MODE" in
             else
                 if [ ! -f /etc/mihomo/config.yaml ]; then
                     (umask 077; curl -fsSL -o /etc/mihomo/config.yaml "https://raw.githubusercontent.com/CatEacc/vps-clash-runbook/main/config.yaml")
-                    sed -i '/^tun:/,/^[^[:space:]]/ s/enable: true/enable: false/' /etc/mihomo/config.yaml 2>/dev/null || true
                 fi
+                sed -i '/^tun:/,/^[^[:space:]]/ s/enable: true/enable: false/' /etc/mihomo/config.yaml 2>/dev/null || true
                 IS_PLACEHOLDER="1"
             fi
         else
-            read -rp "  检测到已有 /etc/mihomo/config.yaml，是否重新交互生成并覆盖？[y/N]: " REGEN_CFG
+            read -rp "  检测到已有 /etc/mihomo/config.yaml，是否重新交互生成并覆盖？[y/N]: " REGEN_CFG || REGEN_CFG="n"
             if [[ "${REGEN_CFG:-n}" =~ ^[Yy]$ ]]; then
                 generate_config /etc/mihomo/config.yaml.new "false"
                 /usr/local/bin/mihomo -d /etc/mihomo -t -f /etc/mihomo/config.yaml.new
@@ -488,6 +524,7 @@ case "$MODE" in
 Description=Mihomo (Clash Meta) Daemon
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -501,12 +538,12 @@ WantedBy=multi-user.target
 EOF
         systemctl daemon-reload
         if [ "$IS_PLACEHOLDER" = "1" ]; then
-            systemctl enable mihomo >/dev/null 2>&1 || true
-            printf "  ${YELLOW}[提示] 当前 /etc/mihomo/config.yaml 为示例占位模板（已自动关闭 TUN 防断联）。${R}\n"
-            printf "  ${DIM}请填入真实节点参数后执行：mihomo -d /etc/mihomo -t -f /etc/mihomo/config.yaml && systemctl restart mihomo${R}\n"
+            printf "  ${YELLOW}[提示] 当前 /etc/mihomo/config.yaml 为示例占位模板（已自动关闭 TUN 防断联，暂未开机自启）。${R}\n"
+            printf "  ${DIM}请填入真实节点参数后执行：mihomo -d /etc/mihomo -t -f /etc/mihomo/config.yaml && systemctl enable --now mihomo${R}\n"
         else
             /usr/local/bin/mihomo -d /etc/mihomo -t -f /etc/mihomo/config.yaml
-            systemctl enable --now mihomo && systemctl restart mihomo
+            systemctl enable mihomo >/dev/null 2>&1 || true
+            systemctl restart mihomo
             printf "  ${GREEN}Mihomo 服务状态：$(systemctl is-active mihomo)${R}\n"
             printf "  ${DIM}混合代理监听: 127.0.0.1:7890 | 配置文件: /etc/mihomo/config.yaml${R}\n"
         fi
