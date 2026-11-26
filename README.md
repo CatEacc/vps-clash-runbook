@@ -1,5 +1,6 @@
 # 生产级 Clash (Mihomo) 实战配置与家宽链式分流手册（Mihomo v1.19.34）
 
+[![CI Check](https://github.com/CatEacc/vps-clash-runbook/actions/workflows/ci.yml/badge.svg)](https://github.com/CatEacc/vps-clash-runbook/actions/workflows/ci.yml)
 [![Mihomo](https://img.shields.io/badge/Mihomo-v1.19.34-blue)](https://github.com/MetaCubeX/mihomo/releases)
 [![Paired With](https://img.shields.io/badge/Server-vps--xray--runbook-green)](https://github.com/CatEacc/vps-xray-runbook)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -30,7 +31,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/CatEacc/vps-clash-runbook/ma
 2. **`dialer-proxy` 客户端链式代理**：一行配置即可让高速机房优化机（CN2 GIA / 9929 / CMIN2）自动中转后端**双 ISP 住宅家宽**，AI / 流媒体 / 风控业务精准走纯净住宅出口，日常冲浪走机房直连不浪费家宽流量；
 3. **零 DNS 泄露 `Fake-IP` 架构**：严格区分 `proxy-server-nameserver`、`default-nameserver` 与 `nameserver`，开启 `respect-rules: true`，防止本地 DNS 抢答污染住宅 IP 画像；
 4. **全量官方 `mrs` 二进制规则集**：采用 MetaCubeX 官方 `mrs` 格式（内存占用较传统 YAML 降 80%+，秒级启动），内置 AI（OpenAI / Claude / Gemini）、流媒体（Netflix / TikTok / YouTube）、私有/局域网、国内直连精准分流；
-5. **家宽光猫友好（防 QUIC 丢包）**：可选一键拦截走家宽出口的 `UDP 443`（QUIC），逼迫浏览器无感回退至 `TCP 443`，彻底避免家用光猫状态表打满跳 Ping；
+5. **家宽光猫友好（防 QUIC 丢包）**：可选一键全局拦截 `UDP 443`（QUIC），逼迫浏览器无感回退至 `TCP 443`，彻底避免家用光猫状态表打满跳 Ping；
 6. **双形态开箱即用**：
    - [`config.yaml`](config.yaml)：完整自建配置模板（填好自己的节点 IP/UUID/密钥直接导入）；
    - [`override.js`](override.js)：Clash Verge Rev / Mihomo Party 全局扩展脚本（直接套在现有订阅上，一键注入零泄露 DNS + AI/家宽分流）。
@@ -74,14 +75,14 @@ proxies:
   # 1. 前置机房优化机（CN2 GIA / 9929 / CMIN2）
   - name: "Relay-CN2-Vision"
     type: vless
-    server: 198.51.100.10
+    server: "198.51.100.10"
     port: 443
-    uuid: 00000000-0000-0000-0000-000000000001
+    uuid: "00000000-0000-0000-0000-000000000001"
     network: tcp
     tls: true
     udp: true
     flow: xtls-rprx-vision
-    servername: addons.mozilla.org
+    servername: "addons.mozilla.org"
     reality-opts:
       public-key: "<你的REALITY公钥>"
       short-id: "<你的ShortID（务必加双引号防纯数字解析异常）>"
@@ -90,7 +91,7 @@ proxies:
   # 2. 后端海外住宅家宽（通过 dialer-proxy 经由前置机中转连入！）
   - name: "Residential-ATT-Landing"
     type: ss
-    server: 192.0.2.30
+    server: "192.0.2.30"
     port: 30001
     cipher: 2022-blake3-aes-256-gcm
     password: "<家宽机生成的32字节Base64密钥>"
