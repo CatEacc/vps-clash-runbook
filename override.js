@@ -98,7 +98,7 @@ function main(config) {
     const oldGroups = Array.isArray(config["proxy-groups"]) ? config["proxy-groups"] : [];
     const directProxies = proxies.filter((p) => !p["dialer-proxy"]).map((p) => p.name);
     const chainProxies = proxies.filter((p) => Boolean(p["dialer-proxy"])).map((p) => p.name);
-    const frontList = directProxies.length > 0 ? directProxies : proxies.map((p) => p.name);
+    const frontList = directProxies.length > 0 ? directProxies : (providerNames.length > 0 ? [] : proxies.map((p) => p.name));
 
     const groups = [
       {
@@ -140,18 +140,25 @@ function main(config) {
     }
     groups.push({ name: "🐟 漏网之鱼", type: "select", proxies: ["🌐 默认代理", "DIRECT"] });
 
-    // 若订阅中链式节点的 dialer-proxy 引用了原订阅的某个自定义策略组，保留该组以防找不到引用报错
+    // 若订阅中链式节点的 dialer-proxy 引用了原订阅的自定义策略组，按 BFS 传递闭包保留全部依赖子组防报错
     const builtGroupNames = new Set(groups.map((g) => g.name));
-    proxies.forEach((p) => {
-      const dp = p["dialer-proxy"];
-      if (dp && !proxyNameSet.has(dp) && !builtGroupNames.has(dp)) {
-        const orig = oldGroups.find((g) => g && g.name === dp);
-        if (orig) {
-          groups.push(orig);
-          builtGroupNames.add(dp);
+    const queue = proxies.map((p) => p["dialer-proxy"]).filter(Boolean);
+    while (queue.length > 0) {
+      const name = queue.shift();
+      if (!name || proxyNameSet.has(name) || builtGroupNames.has(name)) continue;
+      const orig = oldGroups.find((g) => g && g.name === name);
+      if (orig) {
+        groups.push(orig);
+        builtGroupNames.add(name);
+        if (Array.isArray(orig.proxies)) {
+          orig.proxies.forEach((ref) => {
+            if (ref && !proxyNameSet.has(ref) && !builtGroupNames.has(ref)) {
+              queue.push(ref);
+            }
+          });
         }
       }
-    });
+    }
 
     config["proxy-groups"] = groups;
 
