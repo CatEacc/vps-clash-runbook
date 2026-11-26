@@ -19,8 +19,7 @@ SKY="${ESC}[38;5;39m"
 CYAN="${ESC}[38;5;51m"
 GREEN="${ESC}[38;5;46m"
 YELLOW="${ESC}[38;5;220m"
-ORANGE="${ESC}[38;5;208m"
-PINK="${ESC}[38;5;205m"
+ PINK="${ESC}[38;5;205m"
 WHITE="${ESC}[1;97m"
 DIM="${ESC}[38;5;245m"
 
@@ -55,6 +54,31 @@ print_cateacc_logo() {
 BANNER
 }
 
+yaml_quote() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '"%s"' "$s"
+}
+
+clean_host() {
+    local h="$1"
+    h=$(printf "%s" "$h" | tr -d '[:space:]')
+    h="${h#[}"
+    h="${h%]}"
+    printf "%s" "$h"
+}
+
+validate_port() {
+    local p="$1" def="$2"
+    if [[ "$p" =~ ^[0-9]+$ ]] && [ "$p" -ge 1 ] && [ "$p" -le 65535 ]; then
+        echo "$p"
+    else
+        echo "  [提示] 端口 '${p}' 非法，已使用默认端口 ${def}" >&2
+        echo "$def"
+    fi
+}
+
 MODE="${1:-}"
 if [ -z "$MODE" ]; then
     clear 2>/dev/null || true
@@ -71,13 +95,14 @@ if [ -z "$MODE" ]; then
     printf "  ${GREEN}[1]${R} ${WHITE}一键生成 Mihomo config.yaml 配置文件${R} ${CYAN}★ 推荐 · 零缩进报错${R}\n"
     printf "      ${DIM}交互式填入前置节点 (REALITY Vision / Hy2) + 可选家宽链式代理 (SS-2022)${R}\n"
     printf "  ${GREEN}[2]${R} ${WHITE}Linux / 软路由一键安装 Mihomo ${MIHOMO_VERSION} 客户端服务${R} ${PINK}· systemd 自启${R}\n"
-    printf "      ${DIM}下载官方内核 + 注册 systemd 服务 + 加载 /etc/mihomo/config.yaml${R}\n\n"
+    printf "      ${DIM}自动适配 AVX2/兼容内核 + 原子更新二进制 + 加载 /etc/mihomo/config.yaml${R}\n\n"
     read -rp "$(printf "${YELLOW}  请输入功能编号 [1-2] (回车默认 1): ${R}")" MODE
     MODE="${MODE:-1}"
 fi
 
 generate_config() {
     local out_file="$1"
+    local def_tun="${2:-true}"
     echo ""
     printf "  ${CYAN}--- 第 1 步：配置前置节点（机房优化机）---${R}\n"
     printf "  1) VLESS + REALITY + Vision（全平台通吃，推荐）\n"
@@ -91,63 +116,69 @@ generate_config() {
     if [ "$P_TYPE" = "1" ]; then
         RELAY_NAME="Relay-REALITY-Vision"
         read -rp "  前置机 IP 或域名: " R_HOST
+        R_HOST=$(clean_host "$R_HOST")
         read -rp "  前置机端口 (回车默认 443): " R_PORT
-        R_PORT="${R_PORT:-443}"
+        R_PORT=$(validate_port "${R_PORT:-443}" 443)
         read -rp "  VLESS UUID: " R_UUID
+        R_UUID=$(printf "%s" "$R_UUID" | tr -d '[:space:]')
         read -rp "  REALITY Public Key (pbk): " R_PBK
+        R_PBK=$(printf "%s" "$R_PBK" | tr -d '[:space:]')
         read -rp "  REALITY Short ID (sid，可留空): " R_SID
-        echo "  请选择 REALITY SNI (须与服务端一致)："
-        echo "    1) addons.mozilla.org （推荐：纯海外无国内CDN）"
-        echo "    2) dl.google.com      （RPRX 官方示例）"
+        R_SID=$(printf "%s" "$R_SID" | tr -d '[:space:]')
+        echo "  请选择 REALITY SNI (须与服务端完全一致)："
+        echo "    1) addons.mozilla.org （推荐：纯海外无国内 CDN）"
+        echo "    2) www.gentoo.org     （纯海外无国内 CDN）"
         echo "    3) 手动输入自定义域名"
         read -rp "  请输入选项 [1-3] (回车默认 1): " SNI_OPT
         case "${SNI_OPT:-1}" in
             1) R_SNI="addons.mozilla.org" ;;
-            2) R_SNI="dl.google.com" ;;
+            2) R_SNI="www.gentoo.org" ;;
             3)
                 read -rp "  -> 请输入自定义 SNI: " SNI_CUSTOM
-                R_SNI="${SNI_CUSTOM:-addons.mozilla.org}"
+                R_SNI=$(printf "%s" "${SNI_CUSTOM:-addons.mozilla.org}" | tr -d '[:space:]')
                 ;;
             *) R_SNI="addons.mozilla.org" ;;
         esac
 
         PROXY_BLOCK="  - name: \"${RELAY_NAME}\"
     type: vless
-    server: ${R_HOST}
+    server: $(yaml_quote "$R_HOST")
     port: ${R_PORT}
-    uuid: ${R_UUID}
+    uuid: $(yaml_quote "$R_UUID")
     network: tcp
     tls: true
     udp: true
     flow: xtls-rprx-vision
-    servername: ${R_SNI}
+    servername: $(yaml_quote "$R_SNI")
     reality-opts:
-      public-key: ${R_PBK}
-      short-id: \"${R_SID}\"
+      public-key: $(yaml_quote "$R_PBK")
+      short-id: $(yaml_quote "$R_SID")
     client-fingerprint: chrome"
     else
         RELAY_NAME="Relay-Hy2-Hopping"
         read -rp "  前置机 IP 或域名: " R_HOST
+        R_HOST=$(clean_host "$R_HOST")
         read -rp "  Hysteria 2 端口 (回车默认 8443): " R_PORT
-        R_PORT="${R_PORT:-8443}"
+        R_PORT=$(validate_port "${R_PORT:-8443}" 8443)
         read -rp "  端口跳跃范围 (回车默认 20000-50000): " R_MPORT
-        R_MPORT="${R_MPORT:-20000-50000}"
+        R_MPORT=$(printf "%s" "${R_MPORT:-20000-50000}" | tr -d '[:space:]')
         read -rp "  Hysteria 2 密码: " R_PASS
         read -rp "  SNI (回车默认 www.bing.com): " R_SNI
-        R_SNI="${R_SNI:-www.bing.com}"
+        R_SNI=$(printf "%s" "${R_SNI:-www.bing.com}" | tr -d '[:space:]')
         read -rp "  证书 SHA256 指纹 (正规证书留空): " R_FP
+        R_FP=$(printf "%s" "$R_FP" | tr -d '[:space:]')
 
         PROXY_BLOCK="  - name: \"${RELAY_NAME}\"
     type: hysteria2
-    server: ${R_HOST}
+    server: $(yaml_quote "$R_HOST")
     port: ${R_PORT}
-    ports: ${R_MPORT}
-    password: \"${R_PASS}\"
-    sni: ${R_SNI}"
+    ports: $(yaml_quote "$R_MPORT")
+    password: $(yaml_quote "$R_PASS")
+    sni: $(yaml_quote "$R_SNI")"
         if [ -n "$R_FP" ]; then
             PROXY_BLOCK="${PROXY_BLOCK}
     skip-cert-verify: true
-    fingerprint: ${R_FP}"
+    fingerprint: $(yaml_quote "$R_FP")"
         fi
     fi
 
@@ -158,18 +189,30 @@ generate_config() {
     if [[ "$USE_RES" =~ ^[Yy]$ ]]; then
         RES_NAME="Residential-ISP-Landing"
         read -rp "  -> 家宽机 IP: " RES_HOST
+        RES_HOST=$(clean_host "$RES_HOST")
         read -rp "  -> 家宽机 SS-2022 端口: " RES_PORT
+        RES_PORT=$(validate_port "${RES_PORT:-30001}" 30001)
         read -rp "  -> 家宽机 SS-2022 密钥 (32字节 Base64): " RES_PASS
+        RES_PASS=$(printf "%s" "$RES_PASS" | tr -d '[:space:]')
         PROXY_BLOCK="${PROXY_BLOCK}
 
   - name: \"${RES_NAME}\"
     type: ss
-    server: ${RES_HOST}
+    server: $(yaml_quote "$RES_HOST")
     port: ${RES_PORT}
     cipher: 2022-blake3-aes-256-gcm
-    password: \"${RES_PASS}\"
+    password: $(yaml_quote "$RES_PASS")
     udp: true
     dialer-proxy: \"🚀 前置优化机\""
+    fi
+
+    local TUN_ENABLE="$def_tun"
+    if [ "$def_tun" = "false" ]; then
+        read -rp "  是否开启 TUN 全局网卡模式？（远程 SSH 服务器强烈选 n 防断网；本地软路由可选 y）[y/N]: " ASK_TUN
+        [[ "${ASK_TUN:-n}" =~ ^[Yy]$ ]] && TUN_ENABLE="true" || TUN_ENABLE="false"
+    else
+        read -rp "  是否开启 TUN 虚拟网卡模式？（桌面端推荐选 Y；仅用系统代理可选 n）[Y/n]: " ASK_TUN
+        [[ "${ASK_TUN:-y}" =~ ^[Nn]$ ]] && TUN_ENABLE="false" || TUN_ENABLE="true"
     fi
 
     read -rp "  是否拦截 UDP 443 (QUIC) 以保护驻地家宽光猫？[y/N]: " BLOCK_Q
@@ -219,7 +262,7 @@ sniffer:
       ports: [443, 8443]
 
 tun:
-  enable: true
+  enable: ${TUN_ENABLE}
   stack: mixed
   dns-hijack:
     - any:53
@@ -252,7 +295,7 @@ dns:
     - https://dns.alidns.com/dns-query
   nameserver:
     - https://1.1.1.1/dns-query
-    - https://dns.google/dns-query
+    - https://8.8.8.8/dns-query
   nameserver-policy:
     "rule-set:cn_domain,private_domain":
       - https://doh.pub/dns-query
@@ -326,7 +369,7 @@ ${QUIC_RULE}
   - RULE-SET,youtube,🌐 默认代理
   - RULE-SET,telegram_ip,🌐 默认代理,no-resolve
   - RULE-SET,cn_domain,DIRECT
-  - RULE-SET,cn_ip,DIRECT
+  - RULE-SET,cn_ip,DIRECT,no-resolve
   - MATCH,🐟 漏网之鱼
 EOF
     )
@@ -336,7 +379,7 @@ EOF
 case "$MODE" in
     1)
         OUT_FILE="./mihomo-config.yaml"
-        generate_config "$OUT_FILE"
+        generate_config "$OUT_FILE" "true"
         echo ""
         printf "  ${GREEN}配置已生成：${WHITE}${OUT_FILE}${R}\n"
         printf "  ${DIM}直接将该文件下载或复制导入 Clash Verge Rev / Mihomo Party / FlClash 即可使用。${R}\n"
@@ -347,31 +390,47 @@ case "$MODE" in
             exit 1
         fi
         case "$ARCH_INFO" in
-            x86_64)  M_ARCH="amd64" ;;
-            aarch64) M_ARCH="arm64" ;;
-            *)       echo "[错误] 暂不支持架构: ${ARCH_INFO}"; exit 1 ;;
+            x86_64|amd64)
+                if grep -qw avx2 /proc/cpuinfo 2>/dev/null; then
+                    M_ARCH="amd64"
+                else
+                    M_ARCH="amd64-compatible"
+                    echo "  [提示] 检测到当前 x86_64 CPU 不支持 AVX2，自动选用 ${M_ARCH} 兼容内核防 SIGILL 崩溃"
+                fi
+                ;;
+            aarch64|arm64) M_ARCH="arm64" ;;
+            *)             echo "[错误] 暂不支持架构: ${ARCH_INFO}"; exit 1 ;;
         esac
+
+        if ! command -v gzip >/dev/null 2>&1 || ! command -v curl >/dev/null 2>&1; then
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq && apt-get install -y -qq curl gzip ca-certificates
+        fi
+
         echo "[1/3] 下载官方 Mihomo ${MIHOMO_VERSION} (${M_ARCH})..."
         mkdir -p /etc/mihomo /tmp/mihomo-dl
         curl -fsSL -o /tmp/mihomo-dl/mihomo.gz "https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/mihomo-linux-${M_ARCH}-${MIHOMO_VERSION}.gz"
-        gzip -dc /tmp/mihomo-dl/mihomo.gz > /usr/local/bin/mihomo
-        chmod +x /usr/local/bin/mihomo
+        gzip -dc /tmp/mihomo-dl/mihomo.gz > /usr/local/bin/mihomo.new
+        chmod 755 /usr/local/bin/mihomo.new
+        mv -f /usr/local/bin/mihomo.new /usr/local/bin/mihomo
         rm -rf /tmp/mihomo-dl
 
         echo "[2/3] 配置 /etc/mihomo/config.yaml..."
+        IS_PLACEHOLDER="0"
         if [ ! -f /etc/mihomo/config.yaml ]; then
             read -rp "  是否立即交互生成 /etc/mihomo/config.yaml？[Y/n]: " GEN_NOW
             GEN_NOW="${GEN_NOW:-y}"
             if [[ "$GEN_NOW" =~ ^[Yy]$ ]]; then
-                generate_config /etc/mihomo/config.yaml
+                generate_config /etc/mihomo/config.yaml "false"
             else
                 (umask 077; curl -fsSL -o /etc/mihomo/config.yaml "https://raw.githubusercontent.com/CatEacc/vps-clash-runbook/main/config.yaml")
+                sed -i '/^tun:/,/^[^[:space:]]/ s/enable: true/enable: false/' /etc/mihomo/config.yaml 2>/dev/null || true
+                IS_PLACEHOLDER="1"
             fi
         fi
         chmod 700 /etc/mihomo && chmod 600 /etc/mihomo/config.yaml
 
-        echo "[3/3] 校验配置并注册 systemd 开机自启..."
-        /usr/local/bin/mihomo -d /etc/mihomo -t -f /etc/mihomo/config.yaml
+        echo "[3/3] 校验配置并注册 systemd 服务..."
         cat << 'EOF' > /etc/systemd/system/mihomo.service
 [Unit]
 Description=Mihomo (Clash Meta) Daemon
@@ -388,9 +447,17 @@ LimitNOFILE=1048576
 [Install]
 WantedBy=multi-user.target
 EOF
-        systemctl daemon-reload && systemctl enable --now mihomo
-        printf "  ${GREEN}Mihomo 服务状态：$(systemctl is-active mihomo)${R}\n"
-        printf "  ${DIM}混合代理监听: 127.0.0.1:7890 | 配置文件: /etc/mihomo/config.yaml${R}\n"
+        systemctl daemon-reload
+        if [ "$IS_PLACEHOLDER" = "1" ]; then
+            systemctl enable mihomo >/dev/null 2>&1 || true
+            printf "  ${YELLOW}[提示] 当前 /etc/mihomo/config.yaml 为示例占位模板（已自动关闭 TUN 防断联）。${R}\n"
+            printf "  ${DIM}请填入真实节点参数后执行：mihomo -d /etc/mihomo -t -f /etc/mihomo/config.yaml && systemctl restart mihomo${R}\n"
+        else
+            /usr/local/bin/mihomo -d /etc/mihomo -t -f /etc/mihomo/config.yaml
+            systemctl enable --now mihomo && systemctl restart mihomo
+            printf "  ${GREEN}Mihomo 服务状态：$(systemctl is-active mihomo)${R}\n"
+            printf "  ${DIM}混合代理监听: 127.0.0.1:7890 | 配置文件: /etc/mihomo/config.yaml${R}\n"
+        fi
         ;;
     *)
         echo "[错误] 无效编号: ${MODE}，仅支持 1 或 2"

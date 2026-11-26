@@ -68,7 +68,7 @@ dns:
     - https://dns.alidns.com/dns-query
   nameserver:
     - https://1.1.1.1/dns-query
-    - https://dns.google/dns-query
+    - https://8.8.8.8/dns-query
   nameserver-policy:
     "rule-set:cn_domain,private_domain":
       - https://doh.pub/dns-query
@@ -81,31 +81,31 @@ proxies:
   # [示例 1] 前置机房优化机：VLESS + REALITY + Vision（vps-xray-runbook 方案 1-2）
   - name: "Relay-CN2-Vision"
     type: vless
-    server: 198.51.100.10
+    server: "198.51.100.10"
     port: 443
-    uuid: 00000000-0000-0000-0000-000000000001
+    uuid: "00000000-0000-0000-0000-000000000001"
     network: tcp
     tls: true
     udp: true
     flow: xtls-rprx-vision
-    servername: addons.mozilla.org
+    servername: "addons.mozilla.org"
     reality-opts:
-      # 请替换为你的真实 REALITY 公钥与 ShortID（下方为合法格式占位符）
-      public-key: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
-      short-id: 01234567
+      # 注意：short-id 必须用双引号包裹，防止纯数字/科学计数法被 YAML 当整数解析！
+      public-key: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      short-id: "01234567"
     client-fingerprint: chrome
 
   # [示例 2] 前置机房备用机：Hysteria 2 + 端口跳跃（vps-xray-runbook 方案 3）
   - name: "Relay-Hy2-Hopping"
     type: hysteria2
-    server: 203.0.113.20
+    server: "203.0.113.20"
     port: 8443
-    ports: 20000-50000
-    password: REPLACE_WITH_YOUR_HY2_PASSWORD
-    sni: www.bing.com
+    ports: "20000-50000"
+    password: "REPLACE_WITH_YOUR_HY2_PASSWORD"
+    sni: "www.bing.com"
     skip-cert-verify: true
     # 请替换为你的真实自签证书 SHA256 指纹（下方为合法格式占位符）
-    fingerprint: 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF
+    fingerprint: "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF"
     # 精品线路不填 up/down（使用标准 QUIC BBR）；廉价高丢包线可按需取消注释开启 Brutal
     # up: "50 Mbps"
     # down: "300 Mbps"
@@ -114,11 +114,11 @@ proxies:
   # 通过 dialer-proxy 经由“🚀 前置优化机”中转连入，实现 0 IP 漂移 + 精品回国线路！
   - name: "Residential-ISP-Landing"
     type: ss
-    server: 12.34.56.78
+    server: "192.0.2.30"
     port: 30001
     cipher: 2022-blake3-aes-256-gcm
     # 请替换为家宽机生成的 32 字节 Base64 密钥（下方为合法格式占位符）
-    password: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+    password: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
     udp: true
     dialer-proxy: "🚀 前置优化机"
 
@@ -209,9 +209,9 @@ rules:
   # 4. Telegram
   - RULE-SET,telegram_ip,🌐 默认代理,no-resolve
 
-  # 5. 国内域名与 IP 直连
+  # 5. 国内域名与 IP 直连（cn_ip 必加 no-resolve 防止海外未知域名触发本地 DNS 泄露）
   - RULE-SET,cn_domain,DIRECT
-  - RULE-SET,cn_ip,DIRECT
+  - RULE-SET,cn_ip,DIRECT,no-resolve
 
   # 6. 兜底匹配
   - MATCH,🐟 漏网之鱼

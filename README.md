@@ -83,17 +83,17 @@ proxies:
     flow: xtls-rprx-vision
     servername: addons.mozilla.org
     reality-opts:
-      public-key: <你的REALITY公钥>
-      short-id: <你的ShortID>
+      public-key: "<你的REALITY公钥>"
+      short-id: "<你的ShortID（务必加双引号防纯数字解析异常）>"
     client-fingerprint: chrome
 
   # 2. 后端海外住宅家宽（通过 dialer-proxy 经由前置机中转连入！）
   - name: "Residential-ATT-Landing"
     type: ss
-    server: 12.34.56.78
+    server: 192.0.2.30
     port: 30001
     cipher: 2022-blake3-aes-256-gcm
-    password: <家宽机生成的32字节Base64密钥>
+    password: "<家宽机生成的32字节Base64密钥>"
     udp: true
     dialer-proxy: "🚀 前置优化机"   # 关键一行：直接指向前置策略组，前置故障时自动切备用机！
 ```
