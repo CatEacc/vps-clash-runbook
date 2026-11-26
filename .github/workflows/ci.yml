@@ -61,11 +61,34 @@ jobs:
           const grpNames = rProv["proxy-groups"].map((g) => g.name);
           assert(grpNames.includes("🔰 引导组") && grpNames.includes("🔰 子组"), "BFS kept provider bootstrap groups");
 
-          // 4. Node name collision with generated group name is disambiguated
+          // 4. Node name collision with generated group name is disambiguated (even with existing -节点)
           const rCollide = runMain({
-            proxies: [{ name: "🌐 默认代理", type: "vless" }]
+            proxies: [{ name: "🌐 默认代理", type: "vless" }, { name: "🌐 默认代理-节点", type: "vless" }]
           });
-          assert.strictEqual(rCollide.proxies[0].name, "🌐 默认代理-节点");
+          assert.strictEqual(rCollide.proxies[0].name, "🌐 默认代理-节点2");
+
+          // 5. Chain proxy-provider (override.dialer-proxy) never enters front group
+          const rChainProv = runMain({
+            "proxy-providers": {
+              FrontAirport: { type: "http" },
+              ResLanding: { type: "http", override: { "dialer-proxy": "🚀 前置优化机" } }
+            }
+          });
+          const fpUse = rChainProv["proxy-groups"].find((g) => g.name === "🚀 前置优化机").use;
+          const lpUse = rChainProv["proxy-groups"].find((g) => g.name === "🏠 纯净家宽出口").use;
+          assert.strictEqual(JSON.stringify(fpUse), JSON.stringify(["FrontAirport"]));
+          assert.strictEqual(JSON.stringify(lpUse), JSON.stringify(["ResLanding"]));
+
+          // 6. BFS custom group strips chain back-edges to prevent 2-hop loop
+          const rBfsClean = runMain({
+            proxies: [
+              { name: "HK", type: "vless" },
+              { name: "Home", type: "ss", "dialer-proxy": "UpGroup" }
+            ],
+            "proxy-groups": [{ name: "UpGroup", type: "select", proxies: ["HK", "Home", "GhostGroup"] }]
+          });
+          const upGrp = rBfsClean["proxy-groups"].find((g) => g.name === "UpGroup");
+          assert.strictEqual(JSON.stringify(upGrp.proxies), JSON.stringify(["HK"]));
           console.log("All override.js edge-case assertions passed!");
           JS
 
@@ -82,8 +105,8 @@ jobs:
           printf '1\n198.51.100.10\n443\n00000000-0000-0000-0000-000000000001\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n01234567\n1\ny\n192.0.2.30\n30001\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=\nn\ny\n' | bash clash.sh 1
           /tmp/mihomo -d /tmp/mihomo-dir -t -f ./mihomo-config.yaml
 
-          # Test clash.sh Mode 1 (Hy2 with backslash & quote in password + colon port range)
-          printf '2\n203.0.113.20\n8443\n20000:50000\npa"ss\\word\\\nwww.bing.com\n\nn\nn\nn\n' | bash clash.sh 1
+          # Test clash.sh Mode 1 (Hy2 with backslash & quote in password + reversed port range fallback)
+          printf '2\nhttps://203.0.113.20:8443/\n8443\n50000:20000\npa"ss\\word\\\nwww.bing.com\n\nn\nn\nn\n' | bash clash.sh 1
           /tmp/mihomo -d /tmp/mihomo-dir -t -f ./mihomo-config.yaml
           rm -f ./mihomo-config.yaml
           echo "All Mihomo v1.19.34 configuration checks passed!"
