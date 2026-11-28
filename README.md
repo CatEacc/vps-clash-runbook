@@ -1,14 +1,31 @@
-# 生产级 Clash (Mihomo) 实战配置与家宽链式分流手册（Mihomo v1.19.34）
+<div align="center">
 
+<img src="clash_banner.svg" alt="CatEacc vps-clash-runbook Banner" width="100%" />
+
+<br />
+
+[![Release](https://img.shields.io/github/v/release/CatEacc/vps-clash-runbook?style=flat-square&color=0ea5e9&label=Release)](https://github.com/CatEacc/vps-clash-runbook/releases)
+[![Stars](https://img.shields.io/github/stars/CatEacc/vps-clash-runbook?style=flat-square&color=14b8a6&label=Stars)](https://github.com/CatEacc/vps-clash-runbook/stargazers)
+[![Mihomo](https://img.shields.io/badge/Mihomo-v1.19.34-0ea5e9?style=flat-square)](https://github.com/MetaCubeX/mihomo/releases)
 [![CI Check](https://github.com/CatEacc/vps-clash-runbook/actions/workflows/ci.yml/badge.svg)](https://github.com/CatEacc/vps-clash-runbook/actions/workflows/ci.yml)
-[![Mihomo](https://img.shields.io/badge/Mihomo-v1.19.34-blue)](https://github.com/MetaCubeX/mihomo/releases)
-[![Paired With](https://img.shields.io/badge/Server-vps--xray--runbook-green)](https://github.com/CatEacc/vps-xray-runbook)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Telegram](https://img.shields.io/badge/Telegram-%E7%8C%ABe%2Facc-26A5E4?logo=telegram)](https://t.me/CatCryptoMaster)
+[![License: MIT](https://img.shields.io/badge/License-MIT-f59e0b?style=flat-square)](LICENSE)
+[![Telegram](https://img.shields.io/badge/Telegram-%E7%8C%ABe%2Facc-26A5E4?style=flat-square&logo=telegram&logoColor=white)](https://t.me/CatCryptoMaster)
 
-> **仓库地址**：`github.com/CatEacc/vps-clash-runbook`  
-> **配套服务端**：[CatEacc/vps-xray-runbook](https://github.com/CatEacc/vps-xray-runbook)（一键部署 `REALITY Vision` / `Hysteria 2` / `Shadowsocks-2022` 家宽落地）  
-> **适用客户端**：Clash Verge Rev / Mihomo Party / FlClash / OpenClash (Meta 内核) / ShellCrash
+<p>
+  <a href="#小白一键脚本生成零报错配置--linux-软路由一键装-mihomo"><b>一键生成器</b></a> ·
+  <a href="#一服务端协议与-mihomo-客户端兼容性速查"><b>协议兼容表</b></a> ·
+  <a href="#二快速上手两步完成"><b>快速上手</b></a> ·
+  <a href="https://github.com/CatEacc/vps-xray-runbook">Xray 服务端</a> ·
+  <a href="https://github.com/CatEacc/vps-singbox-runbook">sing-box 服务端</a> ·
+  <a href="https://github.com/CatEacc/vps-linux-tuning">Linux 内核调优</a>
+</p>
+
+<sub><b>生产级 Clash (Mihomo v1.19.34) 客户端零泄露分流与家宽链式代理手册</b> — 零 DNS 泄露 Fake-IP 架构 · 官方二进制 <code>.mrs</code> 规则集 · <code>dialer-proxy</code> 家宽链式隔离覆写脚本与一键生成工具</sub>
+
+</div>
+
+> - **适用客户端**：Clash Verge Rev / Mihomo Party / FlClash / OpenClash (Meta 内核) / ShellCrash。
+> - **无缝配套服务端**：搭配 [vps-xray-runbook](https://github.com/CatEacc/vps-xray-runbook) 或 [vps-singbox-runbook](https://github.com/CatEacc/vps-singbox-runbook) 使用，服务端部署完成后会直接输出单行 Clash/Mihomo YAML 节点，复制即可导入。
 
 ---
 
